@@ -1,0 +1,792 @@
+================================================================================
+                    FLASK SERVER COMPLETE EXPLANATION
+                    For Absolute Beginners
+================================================================================
+
+TABLE OF CONTENTS
+-----------------
+1. High-Level Flow
+2. What is Flask?
+3. server.py Explanation (Line by Line)
+4. util.py Explanation (Line by Line)
+5. Data Flow Examples
+6. Understanding get_estimated_price() in Detail
+7. Understanding File Paths and File Reading
+8. Key Syntax Concepts
+9. How to Design Your Own Server
+
+
+================================================================================
+1. HIGH-LEVEL FLOW DIAGRAM
+================================================================================
+
+User Request
+    ↓
+Flask Server (server.py) receives request
+    ↓
+Routes (@app.route) match the URL
+    ↓
+Call util.py functions to get data
+    ↓
+Return JSON response to user
+
+
+================================================================================
+2. WHAT IS FLASK?
+================================================================================
+
+Flask is a WEB FRAMEWORK — it listens for requests from users and sends back 
+responses. Think of it like a waiter in a restaurant:
+- User asks for something (request)
+- Waiter takes the order to the kitchen (routes to functions)
+- Kitchen prepares food (functions do work)
+- Waiter brings food back (response sent to user)
+
+
+================================================================================
+3. server.py EXPLANATION (LINE BY LINE)
+================================================================================
+
+-----------------
+Lines 1-4: Setup
+-----------------
+from flask import Flask, jsonify, request 
+app = Flask(__name__)
+import util
+
+EXPLANATION:
+- "from flask import Flask, jsonify, request" — brings in tools from Flask:
+  * Flask — creates the web server
+  * jsonify — converts Python data to JSON (the format that web browsers understand)
+  * request — gets data that users send to you
+
+- "app = Flask(__name__)" — creates your web server app. __name__ is Flask's way 
+  of identifying the app.
+
+- "import util" — loads the utility file that has functions for data and predictions.
+
+
+-----------------
+Lines 6-7: Startup
+-----------------
+# Load artifacts once at startup so location data is ready
+util.load_save_artifacts()
+
+EXPLANATION:
+- When the server starts, load all data from files ONCE (not every request, 
+  which would be slow).
+- This calls the function in util.py that reads columns.json and the ML model.
+
+
+-----------------------------------
+Lines 9-16: Route 1 - Get Locations
+-----------------------------------
+@app.route('/get_location')
+def get_location():
+    response = jsonify({
+        'location': util.get_location()
+    })
+    return response
+
+EXPLANATION:
+- "@app.route('/get_location')" — this is a DECORATOR (a way to attach instructions). 
+  It means: "When a user visits http://localhost:5000/get_location, run this function."
+
+- "def get_location():" — defines a function. This function runs when someone 
+  visits that URL.
+
+- "response = jsonify({...})" — creates a JSON response. JSON looks like:
+  {"location": ["bhk", "1st block jayanagar", "1st phase jp nagar", ...]}
+
+- "return response" — sends that JSON back to the user.
+
+IN SIMPLE TERMS: When you visit the URL /get_location, the server calls 
+util.get_location(), wraps it in JSON, and sends it back.
+
+
+------------------------------------------
+Lines 18-27: Route 2 - Predict Home Price
+------------------------------------------
+@app.route('/predict_home_price', methods=['POST'])
+def predict_home_price():
+    total_sqft = float(request.form['total_sqft'])
+    bhk = int(request.form['bhk'])
+    bath = int(request.form['bath'])
+    location = request.form['location']
+
+    response = jsonify({
+        'estimated_price': util.get_estimated_price(location, total_sqft, bath, bhk)
+    })
+    return response
+
+EXPLANATION:
+- "methods=['POST']" — this route only accepts POST requests (form submissions), 
+  not GET (visiting a URL).
+
+- "request.form['total_sqft']" — grabs data the user submitted in a form.
+
+- "float()" — converts text to a decimal number (e.g., "1000" → 1000.0).
+
+- "int()" — converts text to a whole number (e.g., "2" → 2).
+
+- "util.get_estimated_price(...)" — calls the prediction function in util.py 
+  with the user's inputs.
+
+- Returns the predicted price as JSON.
+
+IN SIMPLE TERMS: User submits a form with house details → server extracts 
+those details → calls the ML model → returns the predicted price.
+
+
+-------------------------------
+Lines 31-33: Start the Server
+-------------------------------
+if __name__ == '__main__':
+    print("Starting the server...")
+    app.run()
+
+EXPLANATION:
+- "if __name__ == '__main__':" — this block only runs if you directly execute 
+  python server.py (not if someone imports this file).
+
+- "app.run()" — starts the Flask server. It listens on http://localhost:5000 
+  by default.
+
+
+================================================================================
+4. util.py EXPLANATION (LINE BY LINE)
+================================================================================
+
+----------------------------------------
+Lines 1-6: Imports & Global Variables
+----------------------------------------
+import json        # read JSON files
+import pickle      # read saved ML models
+import os          # work with file paths
+import numpy as np # math library for arrays
+
+__location = None      # will store location names
+__data_columns = None  # will store all column names
+__model = None         # will store the ML model
+
+EXPLANATION:
+- GLOBAL VARIABLES (__location, etc.) are variables accessible from anywhere 
+  in the file.
+- They start as None (empty/undefined) until data is loaded.
+
+
+------------------------------------
+Lines 12-27: Prediction Function
+------------------------------------
+def get_estimated_price(location, sqft, bath, bhk):
+    try:
+        loc_index = __data_columns.index(location.lower())
+    except:
+        loc_index = -1
+    
+    x = np.zeros(len(__data_columns))
+    x[0] = sqft
+    x[1] = bath 
+    x[2] = bhk
+    if loc_index >= 0:
+        x[loc_index] = 1
+    
+    return round(__model.predict([x])[0], 2)
+
+DETAILED EXPLANATION IN SECTION 6 BELOW
+
+
+-------------------------------------
+Lines 38-47: Get Locations Function
+-------------------------------------
+def get_location():
+    global __location
+    if __location is None:
+        load_save_artifacts()
+    return __location
+
+EXPLANATION:
+- "global __location" — says "I want to use the global variable __location, 
+  not a local one."
+
+- "if __location is None:" — if data hasn't been loaded yet, load it.
+
+- "return __location" — return the list of location names.
+
+
+----------------------------------
+Lines 50-79: Load Data Function
+----------------------------------
+def load_save_artifacts():
+    print("Loading saved artifacts...")
+    global __data_columns
+    global __location
+    global __model
+
+    base_dir = os.path.dirname(__file__)
+    columns_path = os.path.join(base_dir, "artifacts", "columns.json")
+    model_path = os.path.join(base_dir, "artifacts", "bangalore_home_prices_model.pickle")
+
+    with open(columns_path, "r") as f:
+        __data_columns = json.load(f)['data_columns']
+        __location = __data_columns[3:]
+
+    try:
+        with open(model_path, "rb") as f:
+            __model = pickle.load(f)
+    except FileNotFoundError:
+        __model = None
+    print("Artifacts loaded successfully.")
+
+DETAILED EXPLANATION IN SECTION 7 BELOW
+
+
+================================================================================
+5. DATA FLOW EXAMPLES
+================================================================================
+
+------------------------------------
+Scenario 1: User Wants Locations
+------------------------------------
+1. Browser: GET http://localhost:5000/get_location
+2. Flask routes to get_location() function in server.py
+3. Calls util.get_location()
+4. util checks: is __location loaded? No → calls load_save_artifacts()
+5. Reads columns.json → extracts locations (columns 3 onward)
+6. Returns list to server
+7. Server wraps in JSON: {"location": [...]}
+8. Browser receives and displays
+
+
+----------------------------------------
+Scenario 2: User Predicts House Price
+----------------------------------------
+1. User submits form: sqft=1000, bhk=2, bath=2, location="1st Phase JP Nagar"
+2. Browser: POST http://localhost:5000/predict_home_price (with form data)
+3. Flask routes to predict_home_price() function
+4. Extracts form values: total_sqft=1000, bhk=2, etc.
+5. Calls util.get_estimated_price('1st Phase JP Nagar', 1000, 2, 2)
+6. Function finds location index, creates input array [1000, 2, 2, 0, 0, ..., 1, ..., 0]
+7. ML model predicts: e.g., 45.5 (lakh rupees)
+8. Returns {"estimated_price": 45.5}
+9. Browser receives and displays
+
+
+================================================================================
+6. UNDERSTANDING get_estimated_price() IN DETAIL
+================================================================================
+
+WHAT DOES THIS FUNCTION DO?
+---------------------------
+It takes user inputs (location, sqft, bath, bhk) and converts them into a 
+format the ML model understands, then predicts a price.
+
+
+THE ML MODEL INPUT FORMAT
+--------------------------
+ML models don't understand text like "1st Phase JP Nagar". They only 
+understand numbers.
+
+Your ML model was trained on a table that looks like this:
+
+sqft | bath | bhk | 1st block jayanagar | 1st phase jp nagar | 2nd phase judicial layout | ...
+-----|------|-----|---------------------|--------------------|--------------------------|-
+1000 |  2   |  2  |         0           |         1          |           0              | ...
+1200 |  3   |  3  |         0           |         0          |           1              | ...
+
+KEY INSIGHT: Each location is a COLUMN with 0 or 1:
+- 1 means "this house is in this location"
+- 0 means "this house is NOT in this location"
+
+So __data_columns is the LIST OF ALL POSSIBLE COLUMN NAMES the model expects:
+__data_columns = ['sqft', 'bath', 'bhk', '1st block jayanagar', '1st phase jp nagar', ...]
+
+
+LINE-BY-LINE BREAKDOWN
+----------------------
+
+Line: try:
+      loc_index = __data_columns.index(location.lower())
+      except:
+      loc_index = -1
+
+WHAT'S HAPPENING:
+1. .lower() converts text to lowercase: "1st Phase JP Nagar" → "1st phase jp nagar"
+2. .index(...) finds the position of that location in __data_columns list
+
+EXAMPLE:
+__data_columns = ['sqft', 'bath', 'bhk', '1st block jayanagar', '1st phase jp nagar', ...]
+                   [0]     [1]    [2]         [3]                    [4]
+
+If user says location = "1st phase jp nagar", then:
+loc_index = __data_columns.index("1st phase jp nagar")
+# Result: loc_index = 4
+
+THE EXCEPT CLAUSE:
+If the location isn't found (typo or doesn't exist), loc_index = -1 
+(a signal for "not found").
+
+
+Line: x = np.zeros(len(__data_columns))
+
+WHAT'S THIS?
+- Creates an array filled with zeros, ONE ZERO FOR EACH COLUMN in your model
+- If __data_columns has 100 items, x will have 100 zeros
+
+VISUAL:
+__data_columns = ['sqft', 'bath', 'bhk', '1st block jayanagar', '1st phase jp nagar', ...]
+                  [0]     [1]    [2]         [3]                    [4]
+
+x = np.zeros(len(__data_columns))
+# Result: x = [0, 0, 0, 0, 0, 0, ..., 0]  (100+ zeros)
+
+
+Lines: x[0] = sqft
+       x[1] = bath 
+       x[2] = bhk
+
+WHAT'S THIS?
+Replace the first 3 zeros with actual user data:
+
+# Before:
+x = [0, 0, 0, 0, 0, 0, ..., 0]
+
+# After:
+x[0] = 1000    # sqft value
+x[1] = 2       # bath value
+x[2] = 2       # bhk value
+
+# Result:
+x = [1000, 2, 2, 0, 0, 0, ..., 0]
+
+
+Lines: if loc_index >= 0:
+           x[loc_index] = 1
+
+WHAT'S THIS?
+If we found the location, set that location's position to 1:
+
+# User said: location = "1st phase jp nagar"
+# We found: loc_index = 4
+
+# Before:
+x = [1000, 2, 2, 0, 0, 0, ..., 0]
+
+# After:
+x[4] = 1
+
+# Result:
+x = [1000, 2, 2, 0, 1, 0, ..., 0]
+     [sqft][bath][bhk][block][phase-jp][judicial]...
+
+This tells the model: "This house is in '1st phase jp nagar'".
+
+
+Line: return round(__model.predict([x])[0], 2)
+
+BREAKING IT DOWN:
+1. __model.predict([x]) — feeds the array to the ML model
+   - The model sees: [1000, 2, 2, 0, 1, 0, ..., 0]
+   - The model outputs: something like [45.50] (predicted price in lakh rupees)
+
+2. [0] — extracts the first (only) result from the output
+   - [45.50] → 45.50
+
+3. round(..., 2) — rounds to 2 decimal places
+   - 45.50 → 45.50
+
+
+COMPLETE EXAMPLE WALK-THROUGH
+------------------------------
+User submits:
+  location = "1st phase jp nagar"
+  sqft = 1000
+  bath = 2
+  bhk = 2
+
+Step 1: Find location index
+loc_index = __data_columns.index("1st phase jp nagar")
+# loc_index = 4 (assuming it's at position 4)
+
+Step 2: Create zeros
+x = np.zeros(len(__data_columns))  # len = 100 columns
+# x = [0, 0, 0, 0, 0, ..., 0]  (100 zeros)
+
+Step 3: Fill known values
+x[0] = 1000  # sqft
+x[1] = 2     # bath
+x[2] = 2     # bhk
+# x = [1000, 2, 2, 0, 0, 0, ..., 0]
+
+Step 4: Mark location
+x[4] = 1
+# x = [1000, 2, 2, 0, 1, 0, ..., 0]
+
+Step 5: Predict
+__model.predict([x])  # Model says: "price is 45.50 lakh"
+# Return: 45.50
+
+
+VISUAL DIAGRAM
+--------------
+User Input:
+┌─────────────────────────────────────┐
+│ location: "1st phase jp nagar"      │
+│ sqft: 1000                          │
+│ bath: 2                             │
+│ bhk: 2                              │
+└─────────────────────────────────────┘
+           ↓
+    Find location index
+           ↓
+   Create array of zeros
+           ↓
+   Fill in sqft, bath, bhk
+           ↓
+   Set location to 1
+           ↓
+   Pass to ML Model
+           ↓
+   Model predicts price
+           ↓
+┌─────────────────────────────────────┐
+│ Return: 45.50 lakh rupees           │
+└─────────────────────────────────────┘
+
+
+WHY DO WE DO THIS?
+------------------
+ML models ONLY work with numbers. They need:
+1. Numerical features (sqft, bath, bhk)
+2. One-hot encoding for locations (location columns have 0 or 1)
+
+So we convert:
+- Text "1st phase jp nagar" → position 4 → x[4] = 1
+
+
+================================================================================
+7. UNDERSTANDING FILE PATHS AND FILE READING
+================================================================================
+
+WHAT THIS CODE DOES
+-------------------
+This code finds and reads files from your disk to load data into the program.
+
+
+PART 1: BUILDING FILE PATHS
+----------------------------
+
+Line: base_dir = os.path.dirname(__file__)
+
+WHAT IS __file__?
+- __file__ is a special Python variable that contains the FULL PATH to the 
+  current Python file
+- In your case: C:\Users\risha\Videos\My code session\Flask server\server\util.py
+
+WHAT DOES os.path.dirname() DO?
+- Extracts the DIRECTORY (folder) path from a full file path
+- Removes the filename, keeps only the folder
+
+EXAMPLE:
+__file__ = "C:\Users\risha\Videos\My code session\Flask server\server\util.py"
+                                                                     ^^^^^^^
+                                                                   (filename)
+base_dir = os.path.dirname(__file__)
+# Result: base_dir = "C:\Users\risha\Videos\My code session\Flask server\server"
+
+WHY DO WE NEED THIS?
+So we know WHERE util.py is located, so we can find files relative to it.
+
+
+Line: columns_path = os.path.join(base_dir, "artifacts", "columns.json")
+
+WHAT DOES os.path.join() DO?
+- Combines folder/file names into a complete path
+- Uses the correct slashes for your OS (Windows: \, Mac/Linux: /)
+
+EXAMPLE:
+base_dir = "C:\Users\risha\Videos\My code session\Flask server\server"
+columns_path = os.path.join(base_dir, "artifacts", "columns.json")
+
+# Result:
+columns_path = "C:\Users\risha\Videos\My code session\Flask server\server\artifacts\columns.json"
+
+VISUAL BREAKDOWN:
+base_dir           +  "artifacts"  +  "columns.json"
+     ↓                      ↓               ↓
+C:\...\server      →  C:\...\server\artifacts  →  C:\...\server\artifacts\columns.json
+
+WHY NOT JUST WRITE THE FULL PATH?
+- PORTABILITY: Works on any computer, any OS
+- FLEXIBILITY: If you move the project folder, code still works
+- RELATIVE PATHS: Finds files relative to where util.py is
+
+
+Line: model_path = os.path.join(base_dir, "artifacts", "bangalore_home_prices_model.pickle")
+
+Same idea, but for the ML model file:
+# Result:
+model_path = "C:\Users\risha\Videos\My code session\Flask server\server\artifacts\bangalore_home_prices_model.pickle"
+
+
+PART 2: READING THE COLUMNS FILE
+---------------------------------
+
+Line: with open(columns_path, "r") as f:
+          __data_columns = json.load(f)['data_columns']
+          __location = __data_columns[3:]
+
+Breaking into pieces:
+
+
+WHAT IS open()?
+- A built-in Python function that OPENS A FILE on your disk
+
+ARGUMENTS:
+- columns_path — the file to open (full path we built earlier)
+- "r" — READ MODE (we want to read, not write)
+
+WHAT IS "as f:"?
+- Creates a variable f (file handle) that represents the opened file
+- You use f to read the contents
+
+WHAT IS "with"?
+- A special Python keyword that AUTOMATICALLY CLOSES THE FILE when done
+- Without with, you'd have to manually call f.close()
+
+EXAMPLE WITHOUT "with" (old way):
+f = open(columns_path, "r")
+data = f.read()
+f.close()  # Must remember to close!
+
+WITH "with" (modern way):
+with open(columns_path, "r") as f:
+    data = f.read()
+# File automatically closes here
+
+
+WHAT IS json.load(f)?
+- Reads the JSON file and converts it to a Python dictionary
+
+WHAT'S IN columns.json?
+{
+  "data_columns": ["total_sqft", "bath", "bhk", "1st block jayanagar", "1st phase jp nagar", ...]
+}
+
+WHAT DOES ['data_columns'] DO?
+- Extracts the value of the "data_columns" key
+
+STEP-BY-STEP:
+# Step 1: Read JSON file
+json.load(f)
+# Result: {'data_columns': ['total_sqft', 'bath', 'bhk', '1st block jayanagar', ...]}
+
+# Step 2: Get the 'data_columns' key
+json.load(f)['data_columns']
+# Result: ['total_sqft', 'bath', 'bhk', '1st block jayanagar', '1st phase jp nagar', ...]
+
+# Step 3: Store in global variable
+__data_columns = ['total_sqft', 'bath', 'bhk', '1st block jayanagar', ...]
+
+
+WHAT DOES [3:] MEAN?
+- LIST SLICING: Takes elements from index 3 to the end
+
+EXAMPLE:
+__data_columns = ['total_sqft', 'bath', 'bhk', '1st block jayanagar', '1st phase jp nagar', ...]
+                   [0]          [1]     [2]           [3]                    [4]
+
+__data_columns[3:]  # Skip first 3, take rest
+# Result: ['1st block jayanagar', '1st phase jp nagar', ...]
+
+WHY SKIP FIRST 3?
+- First 3 columns are numerical features: total_sqft, bath, bhk
+- All others are location names
+- We want just the locations for the /get_location endpoint
+
+
+PART 3: READING THE MODEL FILE
+-------------------------------
+
+Line: try:
+          with open(model_path, "rb") as f:
+              __model = pickle.load(f)
+      except FileNotFoundError:
+          __model = None
+
+"rb" INSTEAD OF "r"
+- "r" — read as TEXT (for JSON, CSV, TXT files)
+- "rb" — read as BINARY (for pickle, images, PDFs, etc.)
+
+WHY BINARY?
+ML models are saved in a special binary format, not text.
+
+WHAT IS pickle.load(f)?
+- PICKLE is Python's way of saving/loading objects
+- Loads the ML model from the file into memory
+
+WHAT'S STORED IN THE PICKLE FILE?
+The trained machine learning model (all its weights, parameters, etc.)
+
+WHY try...except FileNotFoundError?
+- TRY: Attempt to open the model file
+- EXCEPT: If the file doesn't exist, don't crash — just set __model = None
+
+WHY?
+The server can still serve locations even if the model file is missing 
+(prediction won't work, but /get_location will).
+
+
+COMPLETE FLOW VISUALIZATION
+----------------------------
+Step 1: Find where util.py is located
+┌────────────────────────────────────────────────┐
+│ base_dir = os.path.dirname(__file__)           │
+│ Result: "C:\...\Flask server\server"           │
+└────────────────────────────────────────────────┘
+                    ↓
+Step 2: Build full paths to files
+┌────────────────────────────────────────────────┐
+│ columns_path = base_dir + "artifacts" +        │
+│                "columns.json"                   │
+│ Result:                                         │
+│ "C:\...\server\artifacts\columns.json"         │
+└────────────────────────────────────────────────┘
+                    ↓
+Step 3: Open and read columns.json
+┌────────────────────────────────────────────────┐
+│ with open(columns_path, "r") as f:             │
+│   __data_columns = json.load(f)['data_columns']│
+│                                                 │
+│ File contents:                                  │
+│ {"data_columns": ["sqft", "bath", "bhk", ...]} │
+│                                                 │
+│ Result:                                         │
+│ __data_columns = ["sqft", "bath", "bhk", ...]  │
+└────────────────────────────────────────────────┘
+                    ↓
+Step 4: Extract locations (skip first 3)
+┌────────────────────────────────────────────────┐
+│ __location = __data_columns[3:]                │
+│ Result:                                         │
+│ ["1st block jayanagar", "1st phase jp nagar"]  │
+└────────────────────────────────────────────────┘
+                    ↓
+Step 5: Load ML model
+┌────────────────────────────────────────────────┐
+│ with open(model_path, "rb") as f:              │
+│   __model = pickle.load(f)                     │
+│                                                 │
+│ Result:                                         │
+│ __model = <trained ML model>                   │
+└────────────────────────────────────────────────┘
+
+
+================================================================================
+8. KEY SYNTAX CONCEPTS
+================================================================================
+
+┌─────────────────┬──────────────────────┬──────────────────────────────────┐
+│ Concept         │ Example              │ What It Does                     │
+├─────────────────┼──────────────────────┼──────────────────────────────────┤
+│ Decorator       │ @app.route('/path')  │ Attaches instructions to a       │
+│                 │                      │ function                         │
+├─────────────────┼──────────────────────┼──────────────────────────────────┤
+│ JSON            │ {"key": "value"}     │ Standard format for web data     │
+├─────────────────┼──────────────────────┼──────────────────────────────────┤
+│ Global Variable │ global __location    │ Access variable from outer scope │
+├─────────────────┼──────────────────────┼──────────────────────────────────┤
+│ Try-Except      │ try: ... except: ... │ Handle errors gracefully         │
+├─────────────────┼──────────────────────┼──────────────────────────────────┤
+│ List Slicing    │ __data_columns[3:]   │ Get elements from index 3 to end │
+├─────────────────┼──────────────────────┼──────────────────────────────────┤
+│ With Statement  │ with open(...) as f: │ Auto-close files when done       │
+├─────────────────┼──────────────────────┼──────────────────────────────────┤
+│ List Index      │ list.index("item")   │ Find position of item in list    │
+├─────────────────┼──────────────────────┼──────────────────────────────────┤
+│ Array Creation  │ np.zeros(10)         │ Create array of 10 zeros         │
+├─────────────────┼──────────────────────┼──────────────────────────────────┤
+│ Type Conversion │ int("5"), float("2") │ Convert string to number         │
+└─────────────────┴──────────────────────┴──────────────────────────────────┘
+
+
+================================================================================
+9. HOW TO DESIGN YOUR OWN SERVER
+================================================================================
+
+STEP 1: PLAN ROUTES
+-------------------
+What URLs do you need? 
+Examples: /get_data, /predict, /submit_form, /get_users, etc.
+
+
+STEP 2: WRITE LOGIC
+-------------------
+Create util.py (or similar) with functions that do the actual work:
+- Load data from files
+- Process user inputs
+- Run calculations or ML models
+- Format responses
+
+
+STEP 3: CONNECT ROUTES
+-----------------------
+In server.py, add @app.route() for each endpoint:
+
+@app.route('/your_endpoint')
+def your_function():
+    # Call util functions
+    data = util.get_data()
+    return jsonify({'result': data})
+
+
+STEP 4: LOAD DATA AT STARTUP
+-----------------------------
+Before app.run(), load any files or data you need:
+
+if __name__ == '__main__':
+    util.load_initial_data()
+    app.run()
+
+
+STEP 5: TEST
+------------
+- Visit URLs in browser: http://localhost:5000/your_endpoint
+- Use tools like Postman or curl for POST requests
+- Check console for errors
+
+
+EXAMPLE MINIMAL SERVER
+----------------------
+from flask import Flask, jsonify
+
+app = Flask(__name__)
+
+@app.route('/hello')
+def hello():
+    return jsonify({'message': 'Hello World!'})
+
+if __name__ == '__main__':
+    app.run()
+
+
+TIPS FOR BEGINNERS
+------------------
+1. Start simple - one route at a time
+2. Test after each change
+3. Use print() statements to debug
+4. Read Flask documentation for more features
+5. Learn about HTTP methods (GET, POST, PUT, DELETE)
+6. Understand JSON format
+7. Practice error handling with try-except
+
+
+================================================================================
+                           END OF DOCUMENTATION
+================================================================================
+
+This file contains all the explanations about how the Flask server works,
+including detailed breakdowns of server.py and util.py, data flow examples,
+and key concepts for beginners.
+
+Keep this as a reference guide for building your own servers!
